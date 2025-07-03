@@ -130,15 +130,8 @@ String SamsungACBridge::getDeviceType(const String& address) {
 }
 
 DeviceState SamsungACBridge::getDeviceState(const String& address) {
-    unsigned long start = millis();
     auto it = devices.find(address);
-    DeviceState result = (it != devices.end()) ? it->second : DeviceState();
-    
-    // Update performance stats
-    totalProcessingTime += (millis() - start);
-    requestCount++;
-    
-    return result;
+    return (it != devices.end()) ? it->second : DeviceState();
 }
 
 bool SamsungACBridge::controlDevice(const String& address, const ControlRequest& request) {

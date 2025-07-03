@@ -1,6 +1,8 @@
 # Samsung AC HTTP Bridge
 
-A standalone HTTP bridge for Samsung air conditioning units using the NASA protocol. This project allows you to control and monitor Samsung AC units through a simple REST API without requiring ESPHome or Home Assistant.
+A standalone HTTP bridge for Samsung air conditioning units using the NASA protocol. This project allows you to control and monitor Samsung AC units locally through a simple REST API without requiring ESPHome or Home Assistant. Best approach for Loxone, NodeRED etc.
+
+Tested with Samsung Windfree AJ050TXJ2KG multi-split unit.
 
 ## Features
 
@@ -18,19 +20,19 @@ A standalone HTTP bridge for Samsung air conditioning units using the NASA proto
 
 - **M5Stack Atom Lite** (ESP32 with 520KB SRAM)
 - **RS485 to TTL converter** for communication with Samsung indoor units
-- Proper wiring to Samsung AC communication bus
+- Proper wiring to Samsung AC communication bus (F1/F2) and power from main board (12V)
 
 ## Wiring
 
 Connect your M5Stack Atom Lite to the Samsung AC communication bus:
 
 ```
-M5Stack Atom GPIO 22 (RX) -> RS485 TTL RO (Receive Output)
-M5Stack Atom GPIO 19 (TX) -> RS485 TTL DI (Data Input)
-RS485 A/+ -> Samsung AC Bus A (usually blue wire)
-RS485 B/- -> Samsung AC Bus B (usually brown wire)
-Common Ground between M5Stack and AC unit
+RS485 A -> Samsung AC Bus F1
+RS485 B -> Samsung AC Bus F2
+Common Ground and +12V power between M5Stack and AC unit
 ```
+
+You can find more here: https://github.com/omerfaruk-aran/esphome_samsung_hvac_bus/wiki/Hardware-Installation
 
 ## Configuration
 

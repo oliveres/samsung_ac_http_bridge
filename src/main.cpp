@@ -187,29 +187,14 @@ void setupRoutes() {
     
     // Root endpoint - system info
     server.on("/", HTTP_GET, []() {
-        unsigned long startTime = millis();
-        StaticJsonDocument<300> doc;
+        StaticJsonDocument<200> doc;
         doc["name"] = "Samsung AC HTTP Bridge";
         doc["version"] = "1.0.0";
-        doc["uptime"] = millis();
+        doc["uptime"] = millis() / 1000; // seconds
         doc["free_heap"] = ESP.getFreeHeap();
-        doc["min_free_heap"] = ESP.getMinFreeHeap();
-        doc["heap_fragmentation"] = 100 - (100 * ESP.getMinFreeHeap() / ESP.getFreeHeap());
-        
-        // Loop timing stats
-        static unsigned long lastLoopTime = 0;
-        static unsigned long maxLoopTime = 0;
-        unsigned long loopTime = millis() - lastLoopTime;
-        if (loopTime > maxLoopTime) maxLoopTime = loopTime;
-        lastLoopTime = millis();
-        doc["loop_time_ms"] = loopTime;
-        doc["max_loop_time_ms"] = maxLoopTime;
         
         String response;
         serializeJsonPretty(doc, response);
-        
-        unsigned long processingTime = millis() - startTime;
-        doc["request_time_ms"] = processingTime;
         
         server.sendHeader("Access-Control-Allow-Origin", "*");
         server.send(200, "application/json", response);
@@ -237,21 +222,6 @@ void setupRoutes() {
     // WiFi info endpoint
     server.on("/wifi", HTTP_GET, handleWiFiInfo);
     
-    // Performance stats endpoint
-    server.on("/stats", HTTP_GET, []() {
-        StaticJsonDocument<400> doc;
-        doc["bridge_requests"] = bridge.getRequestCount();
-        doc["avg_processing_time_ms"] = bridge.getAverageProcessingTime();
-        doc["free_heap"] = ESP.getFreeHeap();
-        doc["min_free_heap"] = ESP.getMinFreeHeap();
-        doc["uptime_seconds"] = millis() / 1000;
-        
-        String response;
-        serializeJsonPretty(doc, response);
-        
-        server.sendHeader("Access-Control-Allow-Origin", "*");
-        server.send(200, "application/json", response);
-    });
 }
 
 void handleGetDevices() {
@@ -275,8 +245,6 @@ void handleGetDevices() {
 }
 
 void handleGetDevice() {
-    unsigned long startTime = millis();
-    uint32_t heapBefore = ESP.getFreeHeap();
     
     if (!server.hasArg("address")) {
         server.sendHeader("Access-Control-Allow-Origin", "*");
@@ -311,11 +279,6 @@ void handleGetDevice() {
     doc["swing_vertical"] = state.swingVertical;
     doc["swing_horizontal"] = state.swingHorizontal;
     doc["preset"] = presetToString(state.preset);
-    
-    unsigned long processingTime = millis() - startTime;
-    uint32_t heapAfter = ESP.getFreeHeap();
-    doc["request_time_ms"] = processingTime;
-    doc["heap_used"] = heapBefore - heapAfter;
     
     String response;
     response.reserve(768); // Pre-allocate to reduce fragmentation

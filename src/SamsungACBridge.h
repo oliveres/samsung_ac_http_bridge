@@ -106,9 +106,6 @@ private:
     NasaProtocol protocol;
     unsigned long lastTransmission = 0;
     
-    // Performance monitoring
-    unsigned long totalProcessingTime = 0;
-    unsigned long requestCount = 0;
     
     static const unsigned long DEVICE_TIMEOUT_MS = 300000; // 5 minutes
     static const unsigned long TRANSMISSION_TIMEOUT_MS = 500;
@@ -132,9 +129,6 @@ public:
     // Device control
     bool controlDevice(const String& address, const ControlRequest& request);
     
-    // Performance monitoring
-    float getAverageProcessingTime() { return requestCount > 0 ? (float)totalProcessingTime / requestCount : 0; }
-    unsigned long getRequestCount() { return requestCount; }
     
     // MessageTarget interface implementation
     void publishData(std::vector<uint8_t>& data) override;
