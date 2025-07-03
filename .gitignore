@@ -1,0 +1,62 @@
+# PlatformIO build directories and files
+.pio/
+.pioenvs/
+.piolibdeps/
+lib/
+test/
+
+# Build artifacts
+*.bin
+*.elf
+*.map
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Operating System files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+
+# Sensitive configuration (if externalized)
+wifi_config.h
+secrets.h
+
+# Backup files
+*.bak
+*.backup
+
+# Local environment variables
+.env
+.env.local
+
+# Python cache (if any scripts are added)
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Archives
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.zip
+
+# Large inspiration directory (optional - can be removed if not needed for GitHub)
+inspiration_esphome_samsung_hvac_bus/

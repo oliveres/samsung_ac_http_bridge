@@ -1,0 +1,313 @@
+#include "SamsungACBridge.h"
+#include "config.h"
+#include <Arduino.h>
+
+SamsungACBridge::SamsungACBridge() {
+    serial = &Serial2; // Use Hardware Serial 2 for Samsung communication
+}
+
+SamsungACBridge::~SamsungACBridge() {
+    // Cleanup if needed
+}
+
+void SamsungACBridge::begin(int rxPin, int txPin, unsigned long baudRate) {
+    DEBUG_PRINTLN("Samsung AC Bridge initializing...");
+    
+    // Initialize UART for Samsung communication - Samsung AC uses Even parity
+    serial->begin(baudRate, SERIAL_8E1, rxPin, txPin);
+    serial->setTimeout(100);
+    
+    DEBUG_PRINTF("UART initialized on pins RX:%d TX:%d at %lu baud\n", rxPin, txPin, baudRate);
+    
+    rxBuffer.clear();
+    devices.clear();
+    discoveredAddresses.clear();
+    
+    DEBUG_PRINTLN("Samsung AC Bridge ready");
+}
+
+void SamsungACBridge::loop() {
+    // Check for transmission timeout
+    unsigned long now = millis();
+    if (!rxBuffer.empty() && (now - lastTransmission >= TRANSMISSION_TIMEOUT_MS)) {
+        DEBUG_PRINTLN("Transmission timeout - clearing buffer");
+        rxBuffer.clear();
+    }
+    
+    // Read incoming data
+    static unsigned long lastDebug = 0;
+    if (serial->available() > 0 && (now - lastDebug > 5000)) {
+        DEBUG_PRINTF("RS485 bytes available: %d\n", serial->available());
+        lastDebug = now;
+    }
+    
+    // Process max 64 bytes per iteration to avoid blocking
+    int bytesToProcess = serial->available();
+    if (bytesToProcess > 64) bytesToProcess = 64;
+    
+    while (bytesToProcess-- > 0 && serial->available()) {
+        lastTransmission = now;
+        uint8_t byte = serial->read();
+        DEBUG_PRINTF("RX: 0x%02X\n", byte);
+        
+        // Skip until start byte found
+        if (rxBuffer.empty() && byte != 0x32) {
+            continue;
+        }
+        
+        rxBuffer.push_back(byte);
+    }
+    
+    // Try to process complete packet after reading
+    if (!rxBuffer.empty()) {
+        processData(rxBuffer);
+    }
+}
+
+void SamsungACBridge::processData(std::vector<uint8_t>& data) {
+    if (data.size() < 3) return; // Need at least start byte + 2 size bytes
+    
+    // Get expected packet size
+    int expectedSize = ((int)data[1] << 8) | (int)data[2];
+    expectedSize += 2; // Add size bytes themselves
+    
+    if ((int)data.size() < expectedSize) {
+        return; // Wait for more data
+    }
+    
+    // We have enough data, try to decode
+    std::vector<uint8_t> packetData(data.begin(), data.begin() + expectedSize);
+    
+    DecodeResult result = tryDecodeNasaPacket(packetData);
+    
+    if (result == DecodeResult::Ok) {
+        DEBUG_PRINTLN("Valid NASA packet received");
+        processNasaPacket(this);
+        
+        // Remove processed packet from buffer
+        data.erase(data.begin(), data.begin() + expectedSize);
+    } else {
+        DEBUG_PRINTF("Packet decode failed: %d\n", (int)result);
+        
+        // Remove first byte and try again
+        data.erase(data.begin());
+    }
+}
+
+std::vector<String> SamsungACBridge::getDiscoveredDevices() {
+    std::vector<String> result;
+    for (const auto& address : discoveredAddresses) {
+        result.push_back(address);
+    }
+    return result;
+}
+
+bool SamsungACBridge::isDeviceKnown(const String& address) {
+    return discoveredAddresses.find(address) != discoveredAddresses.end();
+}
+
+bool SamsungACBridge::isDeviceOnline(const String& address) {
+    auto it = devices.find(address);
+    if (it == devices.end()) return false;
+    
+    unsigned long now = millis();
+    return (now - it->second.lastUpdate) < DEVICE_TIMEOUT_MS;
+}
+
+String SamsungACBridge::getDeviceType(const String& address) {
+    // Parse address to determine type
+    int dotIndex = address.indexOf('.');
+    if (dotIndex == -1) return "Unknown";
+    
+    String klassStr = address.substring(0, dotIndex);
+    uint8_t klass = strtol(klassStr.c_str(), nullptr, 16);
+    
+    if (klass == 0x10) return "Outdoor";
+    else if (klass == 0x20) return "Indoor";
+    else if (klass == 0x50) return "WiredRemote";
+    else if (klass == 0x62) return "WiFiKit";
+    else return "Other";
+}
+
+DeviceState SamsungACBridge::getDeviceState(const String& address) {
+    unsigned long start = millis();
+    auto it = devices.find(address);
+    DeviceState result = (it != devices.end()) ? it->second : DeviceState();
+    
+    // Update performance stats
+    totalProcessingTime += (millis() - start);
+    requestCount++;
+    
+    return result;
+}
+
+bool SamsungACBridge::controlDevice(const String& address, const ControlRequest& request) {
+    if (!isDeviceKnown(address)) {
+        DEBUG_PRINTF("Device %s not known\n", address.c_str());
+        return false;
+    }
+    
+    // Convert ControlRequest to ProtocolRequest
+    ProtocolRequest protocolRequest;
+    
+    if (request.hasPower) {
+        protocolRequest.power = request.power;
+        protocolRequest.hasPower = true;
+    }
+    
+    if (request.hasMode) {
+        protocolRequest.mode = request.mode;
+        protocolRequest.hasMode = true;
+    }
+    
+    if (request.hasTargetTemperature) {
+        protocolRequest.targetTemperature = request.targetTemperature;
+        protocolRequest.hasTargetTemperature = true;
+    }
+    
+    if (request.hasFanMode) {
+        protocolRequest.fanMode = request.fanMode;
+        protocolRequest.hasFanMode = true;
+    }
+    
+    if (request.hasSwingVertical) {
+        protocolRequest.swingVertical = request.swingVertical;
+        protocolRequest.hasSwingVertical = true;
+    }
+    
+    if (request.hasSwingHorizontal) {
+        protocolRequest.swingHorizontal = request.swingHorizontal;
+        protocolRequest.hasSwingHorizontal = true;
+    }
+    
+    if (request.hasPreset) {
+        protocolRequest.preset = request.preset;
+        protocolRequest.hasPreset = true;
+    }
+    
+    // Send the request
+    protocol.publishRequest(this, address, protocolRequest);
+    
+    return true;
+}
+
+// MessageTarget interface implementation
+void SamsungACBridge::publishData(std::vector<uint8_t>& data) {
+    DEBUG_PRINTF("Sending data: %s\n", bytesToHex(data).c_str());
+    serial->write(data.data(), data.size());
+    serial->flush();
+}
+
+void SamsungACBridge::registerAddress(const String& address) {
+    if (discoveredAddresses.find(address) == discoveredAddresses.end()) {
+        DEBUG_PRINTF("Discovered new device: %s (%s)\n", address.c_str(), getDeviceType(address).c_str());
+        discoveredAddresses.insert(address);
+    }
+    updateDeviceState(address);
+}
+
+void SamsungACBridge::updateDeviceState(const String& address) {
+    devices[address].lastUpdate = millis();
+}
+
+void SamsungACBridge::setPower(const String& address, bool value) {
+    devices[address].power = value;
+    updateDeviceState(address);
+    DEBUG_PRINTF("Device %s power: %s\n", address.c_str(), value ? "ON" : "OFF");
+}
+
+void SamsungACBridge::setRoomTemperature(const String& address, float value) {
+    devices[address].roomTemperature = value;
+    updateDeviceState(address);
+    DEBUG_PRINTF("Device %s room temperature: %.1f°C\n", address.c_str(), value);
+}
+
+void SamsungACBridge::setTargetTemperature(const String& address, float value) {
+    devices[address].targetTemperature = value;
+    updateDeviceState(address);
+    DEBUG_PRINTF("Device %s target temperature: %.1f°C\n", address.c_str(), value);
+}
+
+void SamsungACBridge::setOutdoorTemperature(const String& address, float value) {
+    devices[address].outdoorTemperature = value;
+    updateDeviceState(address);
+    DEBUG_PRINTF("Device %s outdoor temperature: %.1f°C\n", address.c_str(), value);
+}
+
+void SamsungACBridge::setIndoorEvaInTemperature(const String& address, float value) {
+    devices[address].evaInTemperature = value;
+    updateDeviceState(address);
+    DEBUG_PRINTF("Device %s eva in temperature: %.1f°C\n", address.c_str(), value);
+}
+
+void SamsungACBridge::setIndoorEvaOutTemperature(const String& address, float value) {
+    devices[address].evaOutTemperature = value;
+    updateDeviceState(address);
+    DEBUG_PRINTF("Device %s eva out temperature: %.1f°C\n", address.c_str(), value);
+}
+
+void SamsungACBridge::setMode(const String& address, Mode mode) {
+    devices[address].mode = mode;
+    updateDeviceState(address);
+    DEBUG_PRINTF("Device %s mode: %d\n", address.c_str(), (int)mode);
+}
+
+void SamsungACBridge::setFanMode(const String& address, FanMode fanmode) {
+    devices[address].fanMode = fanmode;
+    updateDeviceState(address);
+    DEBUG_PRINTF("Device %s fan mode: %d\n", address.c_str(), (int)fanmode);
+}
+
+void SamsungACBridge::setSwingVertical(const String& address, bool vertical) {
+    devices[address].swingVertical = vertical;
+    updateDeviceState(address);
+    DEBUG_PRINTF("Device %s swing vertical: %s\n", address.c_str(), vertical ? "ON" : "OFF");
+}
+
+void SamsungACBridge::setSwingHorizontal(const String& address, bool horizontal) {
+    devices[address].swingHorizontal = horizontal;
+    updateDeviceState(address);
+    DEBUG_PRINTF("Device %s swing horizontal: %s\n", address.c_str(), horizontal ? "ON" : "OFF");
+}
+
+void SamsungACBridge::setPreset(const String& address, Preset preset) {
+    devices[address].preset = preset;
+    updateDeviceState(address);
+    DEBUG_PRINTF("Device %s preset: %d\n", address.c_str(), (int)preset);
+}
+
+void SamsungACBridge::setCustomSensor(const String& address, uint16_t message_number, float value) {
+    devices[address].customSensors[message_number] = value;
+    updateDeviceState(address);
+    DEBUG_PRINTF("Device %s custom sensor 0x%04X: %.2f\n", address.c_str(), message_number, value);
+}
+
+void SamsungACBridge::setErrorCode(const String& address, int error_code) {
+    devices[address].errorCode = error_code;
+    updateDeviceState(address);
+    DEBUG_PRINTF("Device %s error code: %d\n", address.c_str(), error_code);
+}
+
+void SamsungACBridge::setOutdoorInstantaneousPower(const String& address, float value) {
+    devices[address].instantaneousPower = value;
+    updateDeviceState(address);
+    DEBUG_PRINTF("Device %s instantaneous power: %.1fW\n", address.c_str(), value);
+}
+
+void SamsungACBridge::setOutdoorCumulativeEnergy(const String& address, float value) {
+    devices[address].cumulativeEnergy = value;
+    updateDeviceState(address);
+    DEBUG_PRINTF("Device %s cumulative energy: %.1fWh\n", address.c_str(), value);
+}
+
+void SamsungACBridge::setOutdoorCurrent(const String& address, float value) {
+    devices[address].current = value;
+    updateDeviceState(address);
+    DEBUG_PRINTF("Device %s current: %.1fA\n", address.c_str(), value);
+}
+
+void SamsungACBridge::setOutdoorVoltage(const String& address, float value) {
+    devices[address].voltage = value;
+    updateDeviceState(address);
+    DEBUG_PRINTF("Device %s voltage: %.1fV\n", address.c_str(), value);
+}
