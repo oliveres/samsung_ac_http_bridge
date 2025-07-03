@@ -1,0 +1,25 @@
+#pragma once
+
+// WiFi Configuration
+#define WIFI_SSID "Your_WiFi_Network"
+#define WIFI_PASSWORD "your_wifi_password"
+
+// UDP Broadcast Configuration
+#define UDP_ENABLED true                        // Set to false to disable UDP broadcasting
+#define UDP_TARGET_IP "192.168.1.42"           // Loxone IP address
+#define UDP_TARGET_PORT 1277                    // UDP port for Loxone
+#define UDP_BROADCAST_INTERVAL_MS 5000          // Broadcast interval in milliseconds (5 seconds)
+
+// OTA Configuration
+#define OTA_HOSTNAME "samsung-ac-bridge"
+#define OTA_PASSWORD "samsung123"               // Change this for security!
+
+// Hardware Configuration (M5Stack Atom Lite)
+#define RS485_RX_PIN 22                         // GPIO 22 for RS485 RX
+#define RS485_TX_PIN 19                         // GPIO 19 for RS485 TX
+#define RS485_BAUD_RATE 9600                    // Samsung AC communication baud rate
+
+// System Configuration
+#define DEVICE_TIMEOUT_MS 300000                // 5 minutes device timeout
+#define HEAP_CHECK_INTERVAL_MS 30000            // 30 seconds heap monitoring interval
+#define LOW_MEMORY_THRESHOLD 50000              // Force GC below this heap size

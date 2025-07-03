@@ -6,6 +6,7 @@
 #include <map>
 #include <set>
 #include "NasaProtocol.h"
+#include "user_config.h"
 
 struct DeviceState {
     bool power = false;
@@ -107,7 +108,7 @@ private:
     unsigned long lastTransmission = 0;
     
     
-    static const unsigned long DEVICE_TIMEOUT_MS = 300000; // 5 minutes
+    static const unsigned long DEVICE_TIMEOUT_MS = DEVICE_TIMEOUT_MS;
     static const unsigned long TRANSMISSION_TIMEOUT_MS = 500;
     
 public:

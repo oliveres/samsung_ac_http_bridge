@@ -4,20 +4,23 @@
 #include <Update.h>
 #include <ESPmDNS.h>
 #include <ArduinoOTA.h>
+#include <WiFiUdp.h>
 #include "config.h"
+#include "user_config.h"
 #include "NasaProtocol.h"
 #include "SamsungACBridge.h"
-
-
-// WiFi credentials - change these
-const char* ssid = "AirPort";
-const char* password = "skrinavesak";
 
 // Web server on port 80
 WebServer server(80);
 
 // Samsung AC Bridge instance
 SamsungACBridge bridge;
+
+// UDP client for status broadcasting
+#if UDP_ENABLED
+WiFiUDP udp;
+static unsigned long lastUdpBroadcast = 0;
+#endif
 
 // Forward declarations
 void setupOTA();
@@ -31,6 +34,9 @@ void handleUpdateUpload();
 void handleUpdateFile();
 void handleRS485Test();
 void handleWiFiInfo();
+#if UDP_ENABLED
+void sendUdpStatusUpdate();
+#endif
 
 // Helper functions for preset conversion
 String presetToString(Preset preset) {
@@ -65,13 +71,12 @@ void setup() {
     
     DEBUG_PRINTLN("Initializing bridge...");
     // Initialize the bridge with correct Samsung AC settings
-    // GPIO 22 (RX) and GPIO 19 (TX) for M5Stack Atom Lite
-    bridge.begin(22, 19, 9600);  // RX=22, TX=19, 9600 baud with EVEN parity
+    bridge.begin(RS485_RX_PIN, RS485_TX_PIN, RS485_BAUD_RATE);
     DEBUG_PRINTLN("Bridge initialized OK");
     
     DEBUG_PRINTLN("Starting WiFi...");
     // Connect to WiFi
-    WiFi.begin(ssid, password);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     while (WiFi.status() != WL_CONNECTED) {
         delay(1000);
         DEBUG_PRINTLN("Connecting to WiFi...");
@@ -81,10 +86,10 @@ void setup() {
     DEBUG_PRINTLN(WiFi.localIP());
     
     // Setup mDNS
-    if (!MDNS.begin("samsung-ac-bridge")) {
+    if (!MDNS.begin(OTA_HOSTNAME)) {
         DEBUG_PRINTLN("Error setting up MDNS responder!");
     } else {
-        DEBUG_PRINTLN("mDNS responder started: samsung-ac-bridge.local");
+        DEBUG_PRINTF("mDNS responder started: %s.local\n", OTA_HOSTNAME);
         MDNS.addService("http", "tcp", 80);
     }
     
@@ -108,12 +113,20 @@ void loop() {
     bridge.loop();
     M5.update();  // Keep M5 alive
     
+#if UDP_ENABLED
+    // UDP broadcast status updates
+    if (millis() - lastUdpBroadcast >= UDP_BROADCAST_INTERVAL_MS) {
+        sendUdpStatusUpdate();
+        lastUdpBroadcast = millis();
+    }
+#endif
+    
     // Periodic heap monitoring and cleanup
-    if (millis() - lastHeapCheck > 30000) { // Every 30 seconds
+    if (millis() - lastHeapCheck > HEAP_CHECK_INTERVAL_MS) {
         uint32_t freeHeap = ESP.getFreeHeap();
         uint32_t minFreeHeap = ESP.getMinFreeHeap();
         
-        if (freeHeap < 50000 || (freeHeap < minFreeHeap * 1.2)) {
+        if (freeHeap < LOW_MEMORY_THRESHOLD || (freeHeap < minFreeHeap * 1.2)) {
             DEBUG_PRINTF("Low memory: free=%u, min=%u - forcing GC\n", freeHeap, minFreeHeap);
             // Force garbage collection
             yield();
@@ -127,8 +140,8 @@ void loop() {
 
 void setupOTA() {
     // ArduinoOTA setup
-    ArduinoOTA.setHostname("samsung-ac-bridge");
-    ArduinoOTA.setPassword("samsung123");
+    ArduinoOTA.setHostname(OTA_HOSTNAME);
+    ArduinoOTA.setPassword(OTA_PASSWORD);
     
     ArduinoOTA.onStart([]() {
         String type;
@@ -599,9 +612,9 @@ void handleRS485Test() {
     StaticJsonDocument<500> doc;
     
     // RS485 port info
-    doc["rx_pin"] = 22;
-    doc["tx_pin"] = 19;
-    doc["baud_rate"] = 9600;
+    doc["rx_pin"] = RS485_RX_PIN;
+    doc["tx_pin"] = RS485_TX_PIN;
+    doc["baud_rate"] = RS485_BAUD_RATE;
     doc["parity"] = "EVEN";
     
     // Test if Serial2 is available
@@ -685,3 +698,55 @@ void handleWiFiInfo() {
     server.sendHeader("Access-Control-Allow-Origin", "*");
     server.send(200, "application/json", response);
 }
+
+#if UDP_ENABLED
+void sendUdpStatusUpdate() {
+    // Only send if WiFi is connected and we have discovered devices
+    if (!WiFi.isConnected()) return;
+    
+    auto deviceList = bridge.getDiscoveredDevices();
+    if (deviceList.empty()) return;
+    
+    // Create compact JSON status update
+    StaticJsonDocument<768> doc;
+    JsonArray devices = doc.createNestedArray("devices");
+    
+    for (const auto& address : deviceList) {
+        if (!bridge.isDeviceOnline(address)) continue;
+        
+        DeviceState state = bridge.getDeviceState(address);
+        JsonObject device = devices.createNestedObject();
+        
+        device["addr"] = address;
+        device["type"] = bridge.getDeviceType(address);
+        device["power"] = state.power;
+        device["mode"] = (int)state.mode;
+        device["temp_target"] = round(state.targetTemperature * 10.0) / 10.0;
+        device["temp_room"] = round(state.roomTemperature * 10.0) / 10.0;
+        device["fan"] = (int)state.fanMode;
+        device["preset"] = presetToString(state.preset);
+        
+        // Add sensor data for outdoor units
+        if (address.startsWith("10.")) {
+            device["temp_outdoor"] = round(state.outdoorTemperature * 10.0) / 10.0;
+            device["power_instant"] = state.instantaneousPower;
+            device["current"] = state.current;
+            device["voltage"] = state.voltage;
+        }
+    }
+    
+    // Add timestamp
+    doc["timestamp"] = millis() / 1000;
+    
+    String jsonString;
+    serializeJson(doc, jsonString);
+    
+    // Send UDP packet
+    udp.beginPacket(UDP_TARGET_IP, UDP_TARGET_PORT);
+    udp.write((const uint8_t*)jsonString.c_str(), jsonString.length());
+    bool success = udp.endPacket();
+    
+    DEBUG_PRINTF("UDP broadcast sent to %s:%d, success: %s, size: %d bytes\n", 
+                 UDP_TARGET_IP, UDP_TARGET_PORT, success ? "YES" : "NO", jsonString.length());
+}
+#endif

@@ -35,6 +35,9 @@ Thumbs.db
 wifi_config.h
 secrets.h
 
+# User configuration file (contains WiFi credentials and local settings)
+src/user_config.h
+
 # Backup files
 *.bak
 *.backup

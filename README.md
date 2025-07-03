@@ -11,6 +11,7 @@ Tested with Samsung Windfree AJ050TXJ2KG multi-split unit.
 - **Device auto-discovery** - automatically detects connected Samsung AC devices
 - **Real-time status monitoring** including temperatures, power consumption, error codes
 - **Preset support** - Quiet, Windfree, Fast, Sleep, Eco modes
+- **UDP broadcast updates** - periodic status updates to Loxone (192.168.1.42:1277)
 - **OTA firmware updates** via web interface or PlatformIO
 - **WiFi diagnostics** and performance monitoring
 - **CORS support** for web applications
@@ -36,16 +37,38 @@ You can find more here: https://github.com/omerfaruk-aran/esphome_samsung_hvac_b
 
 ## Configuration
 
-1. Update WiFi credentials in `src/main.cpp`:
-   ```cpp
-   const char* ssid = "YOUR_WIFI_SSID";
-   const char* password = "YOUR_WIFI_PASSWORD";
-   ```
+All configuration is centralized in `src/user_config.h`. Copy the example file and update your settings:
 
-2. UART configuration is optimized for Samsung AC (9600 baud, even parity):
-   ```cpp
-   bridge.begin(22, 19, 9600); // RX, TX, baud rate
-   ```
+```bash
+cp src/user_config.h.example src/user_config.h
+# Edit src/user_config.h with your settings
+```
+
+```cpp
+// WiFi Configuration
+#define WIFI_SSID "Your_WiFi_Network"
+#define WIFI_PASSWORD "your_password"
+
+// UDP Broadcast Configuration  
+#define UDP_ENABLED true                        // Set to false to disable UDP broadcasting
+#define UDP_TARGET_IP "192.168.1.42"           // Loxone IP address
+#define UDP_TARGET_PORT 1277                    // UDP port for Loxone
+#define UDP_BROADCAST_INTERVAL_MS 5000          // Broadcast interval (5 seconds)
+
+// OTA Configuration
+#define OTA_HOSTNAME "samsung-ac-bridge"
+#define OTA_PASSWORD "samsung123"               // Change this for security!
+
+// Hardware Configuration (M5Stack Atom Lite)
+#define RS485_RX_PIN 22                         // GPIO 22 for RS485 RX
+#define RS485_TX_PIN 19                         // GPIO 19 for RS485 TX  
+#define RS485_BAUD_RATE 9600                    // Samsung AC baud rate
+```
+
+**Key Settings:**
+- Set `UDP_ENABLED` to `false` if you don't use Loxone
+- Change `OTA_PASSWORD` from default for security
+- UART is pre-configured for Samsung AC (9600 baud, even parity)
 
 ## Building and Uploading
 
@@ -263,6 +286,51 @@ Send control commands to a device.
   "success": true
 }
 ```
+
+### UDP Broadcast Status Updates
+
+The bridge automatically sends periodic status updates via UDP to a configured Loxone server.
+
+**Configuration (in `src/user_config.h`):**
+- Target IP: `UDP_TARGET_IP` (default: 192.168.1.42)
+- UDP Port: `UDP_TARGET_PORT` (default: 1277)  
+- Broadcast Interval: `UDP_BROADCAST_INTERVAL_MS` (default: 5 seconds)
+- Enable/Disable: `UDP_ENABLED` (set to `false` to disable)
+
+**UDP Message Format:**
+```json
+{
+  "devices": [
+    {
+      "addr": "20.00.00",
+      "type": "Indoor",
+      "power": true,
+      "mode": 1,
+      "temp_target": 22.0,
+      "temp_room": 24.5,
+      "fan": 2,
+      "preset": "quiet"
+    },
+    {
+      "addr": "10.00.00",
+      "type": "Outdoor",
+      "power": true,
+      "mode": 1,
+      "temp_target": 22.0,
+      "temp_room": 0.0,
+      "fan": 2,
+      "preset": "none",
+      "temp_outdoor": 36.1,
+      "power_instant": 468,
+      "current": 2.2,
+      "voltage": 226
+    }
+  ],
+  "timestamp": 3600
+}
+```
+
+This provides real-time updates to Loxone without requiring HTTP polling, reducing system load and improving responsiveness.
 
 ### Firmware Update
 
