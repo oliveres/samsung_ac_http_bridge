@@ -100,7 +100,7 @@ pio run -e m5stack-atom-ota --target upload
 ### System Information
 
 #### `GET /`
-Returns system information and performance stats.
+Returns system information.
 
 **Response:**
 ```json
@@ -108,25 +108,7 @@ Returns system information and performance stats.
   "name": "Samsung AC HTTP Bridge",
   "version": "1.0.0",
   "uptime": 123456,
-  "free_heap": 180000,
-  "min_free_heap": 170000,
-  "heap_fragmentation": 5.2,
-  "loop_time_ms": 2,
-  "max_loop_time_ms": 15
-}
-```
-
-#### `GET /stats`
-Performance and memory statistics.
-
-**Response:**
-```json
-{
-  "bridge_requests": 1234,
-  "avg_processing_time_ms": 2.5,
-  "free_heap": 180000,
-  "min_free_heap": 170000,
-  "uptime_seconds": 3600
+  "free_heap": 180000
 }
 ```
 
@@ -196,9 +178,7 @@ Get complete device status.
   "fan_mode": 2,
   "swing_vertical": false,
   "swing_horizontal": false,
-  "preset": "none",
-  "request_time_ms": 3,
-  "heap_used": 512
+  "preset": "none"
 }
 ```
 
@@ -397,9 +377,9 @@ Optimized for M5Stack Atom Lite's limited 520KB SRAM:
    - Use mDNS hostname: `samsung-ac-bridge.local`
 
 3. **Slow HTTP responses**
-   - Check free heap with `/stats` endpoint
-   - Monitor heap fragmentation
-   - Restart device if memory is low
+   - Check free heap with `/` endpoint
+   - Verify WiFi signal strength with `/wifi`
+   - Restart device if memory is low (<50KB free heap)
 
 4. **OTA update failures**
    - Ensure firmware is valid `.bin` file
@@ -408,10 +388,9 @@ Optimized for M5Stack Atom Lite's limited 520KB SRAM:
 
 ### Performance Monitoring
 
-- **Heap usage:** Monitor with `/stats` endpoint
-- **Request timing:** Each response includes `request_time_ms`
-- **Loop performance:** Check `loop_time_ms` in system info
-- **Memory leaks:** Watch `min_free_heap` over time
+- **Heap usage:** Monitor free heap with `/` endpoint
+- **WiFi signal:** Check signal strength with `/wifi` endpoint
+- **Device timeout:** Devices are marked offline after 5 minutes of no communication
 
 ## License
 
