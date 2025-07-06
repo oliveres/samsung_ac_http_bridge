@@ -350,10 +350,17 @@ void processNasaPacket(MessageTarget* target) {
     
     target->registerAddress(source);
     
-    DEBUG_PRINTF("MSG: %s\n", globalPacket.toString().c_str());
+    // Only log important messages, not every notification
+    // DEBUG_PRINTF("MSG: %s\n", globalPacket.toString().c_str());
     
     if (globalPacket.command.dataType == DataType::Ack) {
-        DEBUG_PRINTF("Ack %s\n", globalPacket.toString().c_str());
+        DEBUG_PRINTF("Ack %s, packet number: %d\n", globalPacket.toString().c_str(), globalPacket.command.packetNumber);
+        // Forward ACK to bridge for processing
+        if (target) {
+            // We know target is always SamsungACBridge in our implementation
+            SamsungACBridge* bridge = static_cast<SamsungACBridge*>(target);
+            bridge->handleAckPacket(globalPacket.command.packetNumber);
+        }
         return;
     }
     
@@ -366,33 +373,37 @@ void processNasaPacket(MessageTarget* target) {
 }
 
 void processMessageSet(String source, String dest, MessageSet& message, MessageTarget* target) {
-    target->setCustomSensor(source, (uint16_t)message.messageNumber, (float)message.value);
-    
+    // Only process and store messages that we explicitly know about
     switch (message.messageNumber) {
         case MessageNumber::VAR_in_temp_room_f: {
             double temp = (double)message.value / 10.0;
             DEBUG_PRINTF("s:%s d:%s VAR_in_temp_room_f %g\n", source.c_str(), dest.c_str(), temp);
+            target->setCustomSensor(source, (uint16_t)message.messageNumber, (float)message.value);
             target->setRoomTemperature(source, temp);
             break;
         }
         case MessageNumber::VAR_in_temp_target_f: {
             double temp = (double)message.value / 10.0;
             DEBUG_PRINTF("s:%s d:%s VAR_in_temp_target_f %g\n", source.c_str(), dest.c_str(), temp);
+            target->setCustomSensor(source, (uint16_t)message.messageNumber, (float)message.value);
             target->setTargetTemperature(source, temp);
             break;
         }
         case MessageNumber::ENUM_in_operation_power: {
             DEBUG_PRINTF("s:%s d:%s ENUM_in_operation_power %g\n", source.c_str(), dest.c_str(), (double)message.value);
+            target->setCustomSensor(source, (uint16_t)message.messageNumber, (float)message.value);
             target->setPower(source, message.value != 0);
             break;
         }
         case MessageNumber::ENUM_in_operation_mode: {
             DEBUG_PRINTF("s:%s d:%s ENUM_in_operation_mode %g\n", source.c_str(), dest.c_str(), (double)message.value);
+            target->setCustomSensor(source, (uint16_t)message.messageNumber, (float)message.value);
             target->setMode(source, operationModeToMode(message.value));
             break;
         }
         case MessageNumber::ENUM_in_fan_mode: {
             DEBUG_PRINTF("s:%s d:%s ENUM_in_fan_mode %g\n", source.c_str(), dest.c_str(), (double)message.value);
+            target->setCustomSensor(source, (uint16_t)message.messageNumber, (float)message.value);
             FanMode mode = FanMode::Unknown;
             if (message.value == 0) mode = FanMode::Auto;
             else if (message.value == 1) mode = FanMode::Low;
@@ -404,16 +415,19 @@ void processMessageSet(String source, String dest, MessageSet& message, MessageT
         }
         case MessageNumber::ENUM_in_louver_hl_swing: {
             DEBUG_PRINTF("s:%s d:%s ENUM_in_louver_hl_swing %g\n", source.c_str(), dest.c_str(), (double)message.value);
+            target->setCustomSensor(source, (uint16_t)message.messageNumber, (float)message.value);
             target->setSwingVertical(source, message.value == 1);
             break;
         }
         case MessageNumber::ENUM_in_louver_lr_swing: {
             DEBUG_PRINTF("s:%s d:%s ENUM_in_louver_lr_swing %g\n", source.c_str(), dest.c_str(), (double)message.value);
+            target->setCustomSensor(source, (uint16_t)message.messageNumber, (float)message.value);
             target->setSwingHorizontal(source, message.value == 1);
             break;
         }
         case MessageNumber::ENUM_in_alt_mode: {
             DEBUG_PRINTF("s:%s d:%s ENUM_in_alt_mode %g\n", source.c_str(), dest.c_str(), (double)message.value);
+            target->setCustomSensor(source, (uint16_t)message.messageNumber, (float)message.value);
             Preset preset = static_cast<Preset>(message.value);
             target->setPreset(source, preset);
             break;
@@ -421,61 +435,81 @@ void processMessageSet(String source, String dest, MessageSet& message, MessageT
         case MessageNumber::VAR_out_sensor_airout: {
             double temp = (double)((int16_t)message.value) / 10.0;
             DEBUG_PRINTF("s:%s d:%s VAR_out_sensor_airout %g\n", source.c_str(), dest.c_str(), temp);
+            target->setCustomSensor(source, (uint16_t)message.messageNumber, (float)message.value);
             target->setOutdoorTemperature(source, temp);
             break;
         }
         case MessageNumber::VAR_in_temp_eva_in_f: {
             double temp = ((int16_t)message.value) / 10.0;
             DEBUG_PRINTF("s:%s d:%s VAR_in_temp_eva_in_f %g\n", source.c_str(), dest.c_str(), temp);
+            target->setCustomSensor(source, (uint16_t)message.messageNumber, (float)message.value);
             target->setIndoorEvaInTemperature(source, temp);
             break;
         }
         case MessageNumber::VAR_in_temp_eva_out_f: {
             double temp = ((int16_t)message.value) / 10.0;
             DEBUG_PRINTF("s:%s d:%s VAR_in_temp_eva_out_f %g\n", source.c_str(), dest.c_str(), temp);
+            target->setCustomSensor(source, (uint16_t)message.messageNumber, (float)message.value);
             target->setIndoorEvaOutTemperature(source, temp);
             break;
         }
         case MessageNumber::VAR_out_error_code: {
             int code = static_cast<int>(message.value);
             DEBUG_PRINTF("s:%s d:%s VAR_out_error_code %d\n", source.c_str(), dest.c_str(), code);
+            target->setCustomSensor(source, (uint16_t)message.messageNumber, (float)message.value);
             target->setErrorCode(source, code);
             break;
         }
         case MessageNumber::LVAR_OUT_CONTROL_WATTMETER_1W_1MIN_SUM: {
             double value = static_cast<double>(message.value);
             DEBUG_PRINTF("s:%s d:%s LVAR_OUT_CONTROL_WATTMETER_1W_1MIN_SUM %g\n", source.c_str(), dest.c_str(), value);
+            target->setCustomSensor(source, (uint16_t)message.messageNumber, (float)message.value);
             target->setOutdoorInstantaneousPower(source, value);
             break;
         }
         case MessageNumber::LVAR_OUT_CONTROL_WATTMETER_ALL_UNIT_ACCUM: {
             double value = static_cast<double>(message.value);
             DEBUG_PRINTF("s:%s d:%s LVAR_OUT_CONTROL_WATTMETER_ALL_UNIT_ACCUM %g\n", source.c_str(), dest.c_str(), value);
+            target->setCustomSensor(source, (uint16_t)message.messageNumber, (float)message.value);
             target->setOutdoorCumulativeEnergy(source, value);
             break;
         }
         case MessageNumber::VAR_OUT_SENSOR_CT1: {
             double value = static_cast<double>(message.value) / 10.0;
             DEBUG_PRINTF("s:%s d:%s VAR_OUT_SENSOR_CT1 %g\n", source.c_str(), dest.c_str(), value);
+            target->setCustomSensor(source, (uint16_t)message.messageNumber, (float)message.value);
             target->setOutdoorCurrent(source, value);
             break;
         }
         case MessageNumber::LVAR_NM_OUT_SENSOR_VOLTAGE: {
             double value = static_cast<double>(message.value);
             DEBUG_PRINTF("s:%s d:%s LVAR_NM_OUT_SENSOR_VOLTAGE %g\n", source.c_str(), dest.c_str(), value);
+            target->setCustomSensor(source, (uint16_t)message.messageNumber, (float)message.value);
             target->setOutdoorVoltage(source, value);
             break;
         }
-        default: {
-            DEBUG_PRINTF("Undefined s:%s d:%s %s\n", source.c_str(), dest.c_str(), message.toString().c_str());
+        // Known outdoor unit messages - store but don't log details
+        case MessageNumber::ENUM_out_operation_odu_mode:
+        case MessageNumber::ENUM_out_operation_heatcool:
+        case MessageNumber::ENUM_out_load_4way:
+            target->setCustomSensor(source, (uint16_t)message.messageNumber, (float)message.value);
             break;
-        }
+            
+        // All other messages are completely ignored (no logging, no storage)
+        default:
+            // Silently ignore unknown messages to keep logs clean
+            break;
     }
 }
 
 // NasaProtocol implementation
-void NasaProtocol::publishRequest(MessageTarget* target, const String& address, ProtocolRequest& request) {
+void NasaProtocol::publishRequest(MessageTarget* target, const String& address, ProtocolRequest& request, uint8_t sequenceNumber) {
     Packet packet = Packet::createPartial(Address::parse(address), DataType::Request);
+    
+    // Set sequence number if provided
+    if (sequenceNumber > 0) {
+        packet.command.packetNumber = sequenceNumber;
+    }
     
     if (request.hasMode) {
         request.hasPower = true; // ensure system turns on when mode is set
@@ -526,7 +560,8 @@ void NasaProtocol::publishRequest(MessageTarget* target, const String& address, 
     if (packet.messages.size() == 0)
         return;
         
-    DEBUG_PRINTF("publish packet %s\n", packet.toString().c_str());
+    DEBUG_PRINTF("Sending command to %s (seq: %d) with %d messages\n", 
+                 address.c_str(), sequenceNumber, packet.messages.size());
     
     auto data = packet.encode();
     target->publishData(data);

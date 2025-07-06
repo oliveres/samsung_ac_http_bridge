@@ -85,6 +85,53 @@ enum class MessageNumber : uint16_t {
     LVAR_OUT_CONTROL_WATTMETER_ALL_UNIT_ACCUM = 0x8414,
     VAR_OUT_SENSOR_CT1 = 0x8217,
     LVAR_NM_OUT_SENSOR_VOLTAGE = 0x24fc,
+    
+    // Additional messages from ESPHome implementation
+    VAR_IN_FSV_3021 = 0x4260,                      // FSV sensor 1 (division by 10)
+    VAR_IN_FSV_3022 = 0x4261,                      // FSV sensor 2 (division by 10)
+    VAR_IN_FSV_3023 = 0x4262,                      // FSV sensor 3 (division by 10)
+    NASA_OUTDOOR_CONTROL_WATTMETER_1UNIT = 0x8411, // Single unit wattmeter
+    TOTAL_PRODUCED_ENERGY = 0x8427,                // Total produced energy
+    ACTUAL_PRODUCED_ENERGY = 0x8426,               // Actual produced energy
+    NASA_OUTDOOR_CONTROL_WATTMETER_TOTAL_SUM = 0x8415,       // Total wattmeter sum
+    NASA_OUTDOOR_CONTROL_WATTMETER_TOTAL_SUM_ACCUM = 0x8416, // Total wattmeter accumulator
+    
+    // Ventilation and advanced indoor unit messages
+    ENUM_IN_OPERATION_VENT_POWER = 0x4003,         // Ventilation power on/off
+    ENUM_IN_OPERATION_VENT_MODE = 0x4004,          // Ventilation mode
+    ENUM_in_louver_hl_part_swing = 0x4012,         // Partial swing mode
+    ENUM_IN_QUIET_MODE = 0x406E,                   // Quiet mode
+    ENUM_IN_OPERATION_POWER_ZONE1 = 0x4119,       // Zone 1 power
+    ENUM_IN_OPERATION_POWER_ZONE2 = 0x411E,       // Zone 2 power
+    ENUM_in_operation_mode_real = 0x4002,          // Real operation mode
+    ENUM_in_fan_vent_mode = 0x4008,                // Fan ventilation mode
+    VAR_in_capacity_request = 0x4211,              // Capacity request (kW, division by 8.6)
+    
+    // Outdoor unit pipe sensors
+    VAR_OUT_SENSOR_PIPEIN3 = 0x8261,               // Pipe in sensor 3 (Celsius, division by 10)
+    VAR_OUT_SENSOR_PIPEIN4 = 0x8262,               // Pipe in sensor 4 (Celsius, division by 10)
+    VAR_OUT_SENSOR_PIPEIN5 = 0x8263,               // Pipe in sensor 5 (Celsius, division by 10)
+    VAR_OUT_SENSOR_PIPEOUT1 = 0x8264,              // Pipe out sensor 1 (Celsius, division by 10)
+    VAR_OUT_SENSOR_PIPEOUT2 = 0x8265,              // Pipe out sensor 2 (Celsius, division by 10)
+    VAR_OUT_SENSOR_PIPEOUT3 = 0x8266,              // Pipe out sensor 3 (Celsius, division by 10)
+    VAR_OUT_SENSOR_PIPEOUT4 = 0x8267,              // Pipe out sensor 4 (Celsius, division by 10)
+    VAR_OUT_SENSOR_PIPEOUT5 = 0x8268,              // Pipe out sensor 5 (Celsius, division by 10)
+    VAR_out_control_order_cfreq_comp2 = 0x8274,    // Compressor 2 frequency order
+    VAR_out_control_target_cfreq_comp2 = 0x8275,   // Compressor 2 frequency target
+    VAR_OUT_PROJECT_CODE = 0x82bc,                  // Project code
+    VAR_OUT_PRODUCT_OPTION_CAPA = 0x82e3,           // Product option capacity
+    VAR_out_sensor_top1 = 0x8280,                   // Top sensor 1 (Celsius, division by 10)
+    VAR_OUT_PHASE_CURRENT = 0x82db,                 // Phase current
+    
+    // Air quality sensors
+    VAR_IN_DUST_SENSOR_PM10_0_VALUE = 0x42d1,      // PM10.0 dust sensor value
+    VAR_IN_DUST_SENSOR_PM2_5_VALUE = 0x42d2,       // PM2.5 dust sensor value
+    VAR_IN_DUST_SENSOR_PM1_0_VALUE = 0x42d3,       // PM1.0 dust sensor value
+    
+    // Additional outdoor unit messages from NASA wiki
+    ENUM_out_operation_odu_mode = 0x8001,  // Outdoor Driving Mode (OP_STOP, OP_SAFETY, OP_NORMAL, etc.)
+    ENUM_out_operation_heatcool = 0x8003,  // Heat/Cool operation: ['Undefined', 'Cool', 'Heat', 'CoolMain', 'HeatMain']
+    ENUM_out_load_4way = 0x801A,           // 4Way On/Off valve load
 };
 
 enum class Mode {
@@ -207,12 +254,13 @@ int fanModeToNasaFanMode(FanMode mode);
 // Protocol processing functions
 DecodeResult tryDecodeNasaPacket(std::vector<uint8_t> data);
 void processNasaPacket(class MessageTarget* target);
+void processMessageSet(String source, String dest, MessageSet& message, class MessageTarget* target);
 
 class NasaProtocol {
 public:
     NasaProtocol() = default;
     
-    void publishRequest(class MessageTarget* target, const String& address, struct ProtocolRequest& request);
+    void publishRequest(class MessageTarget* target, const String& address, struct ProtocolRequest& request, uint8_t sequenceNumber = 0);
     void protocolUpdate(class MessageTarget* target);
 };
 

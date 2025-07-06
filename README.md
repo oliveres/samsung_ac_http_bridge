@@ -106,9 +106,24 @@ Returns system information.
 ```json
 {
   "name": "Samsung AC HTTP Bridge",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "uptime": 123456,
-  "free_heap": 180000
+  "free_heap": 180000,
+  "pending_commands": 0
+}
+```
+
+#### `GET /wifi`
+WiFi connection status and signal strength.
+
+#### `GET /queue`
+Command queue status.
+
+**Response:**
+```json
+{
+  "pending_commands": 0,
+  "has_active_commands": false
 }
 ```
 
@@ -263,9 +278,20 @@ Send control commands to a device.
 **Response:**
 ```json
 {
-  "success": true
+  "success": true,
+  "queued": true,
+  "pending_commands": 1,
+  "message": "Command queued for execution"
 }
 ```
+
+**Command Reliability (v1.1.0+):**
+- Commands are queued with automatic retry (up to 3 attempts)
+- Each command waits for ACK from the AC unit (1 second timeout)
+- Failed commands are retried after 1 second
+- System monitors state changes to confirm execution
+- Sequence numbers track command/ACK pairs
+- Only one active command at a time to prevent conflicts
 
 ### UDP Broadcast Status Updates
 
@@ -361,6 +387,21 @@ Optimized for M5Stack Atom Lite's limited 520KB SRAM:
 - **No built-in authentication** - secure network access appropriately
 - **CORS enabled** - restrict origin in production if needed
 - **Firmware verification** - only upload trusted firmware files
+
+## Debug Console (v1.1.0+)
+
+### `GET /debug`
+Live web-based debug console showing real-time ESP32 serial output without requiring USB connection.
+
+**Features:**
+- Live streaming of debug messages (updates every 500ms)
+- Connection status indicator (Connected/Disconnected)
+- Free memory monitoring
+- Message buffer (last 100 messages)
+- Auto-scroll to latest messages
+- Clear console function
+
+This is particularly useful for remote debugging and monitoring the bridge operation without physical access.
 
 ## Troubleshooting
 

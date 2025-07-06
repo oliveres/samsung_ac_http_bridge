@@ -34,6 +34,41 @@ void SamsungACBridge::loop() {
         rxBuffer.clear();
     }
     
+    // Process command queue
+    QueuedCommand* cmdToSend = commandQueue.getNextCommandToSend();
+    if (cmdToSend) {
+        // Send the command
+        uint8_t seqNum = currentSequenceNumber++;
+        if (currentSequenceNumber == 0) currentSequenceNumber = 1; // Skip 0
+        
+        // Convert QueuedRequest back to ProtocolRequest
+        ProtocolRequest protocolReq;
+        protocolReq.power = cmdToSend->request.power;
+        protocolReq.hasPower = cmdToSend->request.hasPower;
+        protocolReq.mode = (Mode)cmdToSend->request.mode;
+        protocolReq.hasMode = cmdToSend->request.hasMode;
+        protocolReq.targetTemperature = cmdToSend->request.targetTemperature;
+        protocolReq.hasTargetTemperature = cmdToSend->request.hasTargetTemperature;
+        protocolReq.fanMode = (FanMode)cmdToSend->request.fanMode;
+        protocolReq.hasFanMode = cmdToSend->request.hasFanMode;
+        protocolReq.swingVertical = cmdToSend->request.swingVertical;
+        protocolReq.hasSwingVertical = cmdToSend->request.hasSwingVertical;
+        protocolReq.swingHorizontal = cmdToSend->request.swingHorizontal;
+        protocolReq.hasSwingHorizontal = cmdToSend->request.hasSwingHorizontal;
+        protocolReq.preset = (Preset)cmdToSend->request.preset;
+        protocolReq.hasPreset = cmdToSend->request.hasPreset;
+        
+        protocol.publishRequest(this, cmdToSend->targetAddress, protocolReq, seqNum);
+        commandQueue.markCommandSent(cmdToSend, seqNum);
+    }
+    
+    // Cleanup old commands
+    static unsigned long lastCleanup = 0;
+    if (now - lastCleanup > 5000) { // Every 5 seconds
+        commandQueue.cleanup();
+        lastCleanup = now;
+    }
+    
     // Read incoming data
     static unsigned long lastDebug = 0;
     if (serial->available() > 0 && (now - lastDebug > 5000)) {
@@ -48,7 +83,8 @@ void SamsungACBridge::loop() {
     while (bytesToProcess-- > 0 && serial->available()) {
         lastTransmission = now;
         uint8_t byte = serial->read();
-        DEBUG_PRINTF("RX: 0x%02X\n", byte);
+        // Don't log individual bytes - too noisy
+        // DEBUG_PRINTF("RX: 0x%02X\n", byte);
         
         // Skip until start byte found
         if (rxBuffer.empty() && byte != 0x32) {
@@ -81,7 +117,7 @@ void SamsungACBridge::processData(std::vector<uint8_t>& data) {
     DecodeResult result = tryDecodeNasaPacket(packetData);
     
     if (result == DecodeResult::Ok) {
-        DEBUG_PRINTLN("Valid NASA packet received");
+        // DEBUG_PRINTLN("Valid NASA packet received");  // Too noisy, removed
         processNasaPacket(this);
         
         // Remove processed packet from buffer
@@ -111,7 +147,7 @@ bool SamsungACBridge::isDeviceOnline(const String& address) {
     if (it == devices.end()) return false;
     
     unsigned long now = millis();
-    return (now - it->second.lastUpdate) < DEVICE_TIMEOUT_MS;
+    return (now - it->second.lastUpdate) < DEVICE_TIMEOUT_MS_VALUE;
 }
 
 String SamsungACBridge::getDeviceType(const String& address) {
@@ -140,53 +176,55 @@ bool SamsungACBridge::controlDevice(const String& address, const ControlRequest&
         return false;
     }
     
-    // Convert ControlRequest to ProtocolRequest
-    ProtocolRequest protocolRequest;
+    // Convert ControlRequest to QueuedRequest
+    QueuedRequest queuedRequest;
     
     if (request.hasPower) {
-        protocolRequest.power = request.power;
-        protocolRequest.hasPower = true;
+        queuedRequest.power = request.power;
+        queuedRequest.hasPower = true;
     }
     
     if (request.hasMode) {
-        protocolRequest.mode = request.mode;
-        protocolRequest.hasMode = true;
+        queuedRequest.mode = (int)request.mode;
+        queuedRequest.hasMode = true;
     }
     
     if (request.hasTargetTemperature) {
-        protocolRequest.targetTemperature = request.targetTemperature;
-        protocolRequest.hasTargetTemperature = true;
+        queuedRequest.targetTemperature = request.targetTemperature;
+        queuedRequest.hasTargetTemperature = true;
     }
     
     if (request.hasFanMode) {
-        protocolRequest.fanMode = request.fanMode;
-        protocolRequest.hasFanMode = true;
+        queuedRequest.fanMode = (int)request.fanMode;
+        queuedRequest.hasFanMode = true;
     }
     
     if (request.hasSwingVertical) {
-        protocolRequest.swingVertical = request.swingVertical;
-        protocolRequest.hasSwingVertical = true;
+        queuedRequest.swingVertical = request.swingVertical;
+        queuedRequest.hasSwingVertical = true;
     }
     
     if (request.hasSwingHorizontal) {
-        protocolRequest.swingHorizontal = request.swingHorizontal;
-        protocolRequest.hasSwingHorizontal = true;
+        queuedRequest.swingHorizontal = request.swingHorizontal;
+        queuedRequest.hasSwingHorizontal = true;
     }
     
     if (request.hasPreset) {
-        protocolRequest.preset = request.preset;
-        protocolRequest.hasPreset = true;
+        queuedRequest.preset = (int)request.preset;
+        queuedRequest.hasPreset = true;
     }
     
-    // Send the request
-    protocol.publishRequest(this, address, protocolRequest);
+    // Add command to queue instead of sending directly
+    QueuedCommand* cmd = commandQueue.addCommand(address, queuedRequest);
     
-    return true;
+    return cmd != nullptr;
 }
 
 // MessageTarget interface implementation
 void SamsungACBridge::publishData(std::vector<uint8_t>& data) {
-    DEBUG_PRINTF("Sending data: %s\n", bytesToHex(data).c_str());
+    DEBUG_PRINTF("TX: %d bytes to RS485\n", data.size());
+    // Full hex dump is too noisy
+    // DEBUG_PRINTF("Sending data: %s\n", bytesToHex(data).c_str());
     serial->write(data.data(), data.size());
     serial->flush();
 }
@@ -201,24 +239,38 @@ void SamsungACBridge::registerAddress(const String& address) {
 
 void SamsungACBridge::updateDeviceState(const String& address) {
     devices[address].lastUpdate = millis();
+    
+    // Check if any queued command is now confirmed
+    DeviceState& state = devices[address];
+    commandQueue.checkStateConfirmation(address, state.power, (int)state.mode, 
+                                      state.targetTemperature, (int)state.fanMode, (int)state.preset);
 }
 
 void SamsungACBridge::setPower(const String& address, bool value) {
+    // Only log if state actually changed
+    if (devices[address].power != value) {
+        DEBUG_PRINTF("Device %s power: %s\n", address.c_str(), value ? "ON" : "OFF");
+    }
     devices[address].power = value;
     updateDeviceState(address);
-    DEBUG_PRINTF("Device %s power: %s\n", address.c_str(), value ? "ON" : "OFF");
 }
 
 void SamsungACBridge::setRoomTemperature(const String& address, float value) {
+    // Room temp changes frequently, only log significant changes
+    float oldValue = devices[address].roomTemperature;
+    if (abs(oldValue - value) > 0.5) {
+        DEBUG_PRINTF("Device %s room temperature: %.1f°C\n", address.c_str(), value);
+    }
     devices[address].roomTemperature = value;
     updateDeviceState(address);
-    DEBUG_PRINTF("Device %s room temperature: %.1f°C\n", address.c_str(), value);
 }
 
 void SamsungACBridge::setTargetTemperature(const String& address, float value) {
+    if (devices[address].targetTemperature != value) {
+        DEBUG_PRINTF("Device %s target temperature: %.1f°C\n", address.c_str(), value);
+    }
     devices[address].targetTemperature = value;
     updateDeviceState(address);
-    DEBUG_PRINTF("Device %s target temperature: %.1f°C\n", address.c_str(), value);
 }
 
 void SamsungACBridge::setOutdoorTemperature(const String& address, float value) {
@@ -272,7 +324,8 @@ void SamsungACBridge::setPreset(const String& address, Preset preset) {
 void SamsungACBridge::setCustomSensor(const String& address, uint16_t message_number, float value) {
     devices[address].customSensors[message_number] = value;
     updateDeviceState(address);
-    DEBUG_PRINTF("Device %s custom sensor 0x%04X: %.2f\n", address.c_str(), message_number, value);
+    // Note: Custom sensors are now only stored for messages we explicitly process
+    // No logging here since all stored sensors are known and already logged in processMessageSet
 }
 
 void SamsungACBridge::setErrorCode(const String& address, int error_code) {

@@ -34,6 +34,7 @@ void handleUpdateUpload();
 void handleUpdateFile();
 void handleRS485Test();
 void handleWiFiInfo();
+void handleDebugStream();
 #if UDP_ENABLED
 void sendUdpStatusUpdate();
 #endif
@@ -83,7 +84,7 @@ void setup() {
     }
     DEBUG_PRINTLN("WiFi connected!");
     DEBUG_PRINT("IP address: ");
-    DEBUG_PRINTLN(WiFi.localIP());
+    DEBUG_PRINTLN(WiFi.localIP().toString());
     
     // Setup mDNS
     if (!MDNS.begin(OTA_HOSTNAME)) {
@@ -198,19 +199,52 @@ void setupRoutes() {
         server.send(200);
     });
     
-    // Root endpoint - system info
+    // Root endpoint - system info with HTML option
     server.on("/", HTTP_GET, []() {
-        StaticJsonDocument<200> doc;
-        doc["name"] = "Samsung AC HTTP Bridge";
-        doc["version"] = "1.0.0";
-        doc["uptime"] = millis() / 1000; // seconds
-        doc["free_heap"] = ESP.getFreeHeap();
+        // Check if client wants HTML (browser)
+        String acceptHeader = server.header("Accept");
+        bool wantsHtml = acceptHeader.indexOf("text/html") >= 0;
         
-        String response;
-        serializeJsonPretty(doc, response);
-        
-        server.sendHeader("Access-Control-Allow-Origin", "*");
-        server.send(200, "application/json", response);
+        if (wantsHtml) {
+            // Serve HTML page with links
+            String html = "<html><head><title>Samsung AC Bridge</title>";
+            html += "<style>body{font-family:Arial,sans-serif;margin:40px;}";
+            html += "h1{color:#333;}a{color:#2196F3;text-decoration:none;margin:10px;}";
+            html += "a:hover{text-decoration:underline;}.info{background:#f0f0f0;padding:20px;border-radius:5px;margin:20px 0;}";
+            html += ".links{margin:20px 0;}.links a{display:inline-block;background:#2196F3;color:white;padding:10px 20px;border-radius:5px;margin:5px;}";
+            html += ".links a:hover{background:#1976D2;}</style></head><body>";
+            html += "<h1>Samsung AC HTTP Bridge</h1>";
+            html += "<div class='info'>";
+            html += "<p><strong>Version:</strong> 1.1.0</p>";
+            html += "<p><strong>Uptime:</strong> " + String(millis() / 1000) + " seconds</p>";
+            html += "<p><strong>Free Heap:</strong> " + String(ESP.getFreeHeap()) + " bytes</p>";
+            html += "<p><strong>Pending Commands:</strong> " + String(bridge.getPendingCommandsCount()) + "</p>";
+            html += "</div>";
+            html += "<div class='links'>";
+            html += "<a href='/debug'>Debug Console</a>";
+            html += "<a href='/devices'>Devices (JSON)</a>";
+            html += "<a href='/wifi'>WiFi Info (JSON)</a>";
+            html += "<a href='/queue'>Queue Status (JSON)</a>";
+            html += "<a href='/update'>Firmware Update</a>";
+            html += "</div>";
+            html += "</body></html>";
+            
+            server.send(200, "text/html", html);
+        } else {
+            // Serve JSON for API clients
+            StaticJsonDocument<256> doc;
+            doc["name"] = "Samsung AC HTTP Bridge";
+            doc["version"] = "1.1.0";
+            doc["uptime"] = millis() / 1000; // seconds
+            doc["free_heap"] = ESP.getFreeHeap();
+            doc["pending_commands"] = bridge.getPendingCommandsCount();
+            
+            String response;
+            serializeJsonPretty(doc, response);
+            
+            server.sendHeader("Access-Control-Allow-Origin", "*");
+            server.send(200, "application/json", response);
+        }
     });
     
     // Get all discovered devices
@@ -234,6 +268,178 @@ void setupRoutes() {
     
     // WiFi info endpoint
     server.on("/wifi", HTTP_GET, handleWiFiInfo);
+    
+    // Command queue status endpoint
+    server.on("/queue", HTTP_GET, []() {
+        StaticJsonDocument<200> doc;
+        doc["pending_commands"] = bridge.getPendingCommandsCount();
+        doc["has_active_commands"] = bridge.hasActiveCommands();
+        
+        String response;
+        serializeJsonPretty(doc, response);
+        
+        server.sendHeader("Access-Control-Allow-Origin", "*");
+        server.send(200, "application/json", response);
+    });
+    
+    // Debug console endpoint
+    server.on("/debug", HTTP_GET, []() {
+        String html = R"(<!DOCTYPE html>
+<html>
+<head>
+    <title>Samsung AC Debug Console</title>
+    <meta charset='utf-8'>
+    <style>
+        body { font-family: monospace; background: #1e1e1e; color: #d4d4d4; margin: 20px; }
+        .console { background: #000; padding: 15px; border-radius: 5px; height: 75vh; overflow-y: auto; white-space: pre-wrap; }
+        .timestamp { color: #858585; }
+        .message { color: #d4d4d4; }
+        .header { color: #569cd6; margin-bottom: 10px; }
+        .controls { margin-bottom: 10px; }
+        button { background: #569cd6; color: white; border: none; padding: 5px 15px; border-radius: 3px; cursor: pointer; }
+        button:hover { background: #4d8cc7; }
+        .status { margin-top: 10px; color: #858585; }
+        .connected { color: #4ec9b0 !important; }
+        .disconnected { color: #f44747 !important; }
+    </style>
+</head>
+<body>
+    <h2 class='header'>Samsung AC Bridge - Debug Console (Live)</h2>
+    <div class='controls'>
+        <button onclick='location.href="/"'>System Info</button>
+        <button onclick='location.href="/devices"'>Devices</button>
+        <button onclick='clearConsole()'>Clear Console</button>
+    </div>
+    
+    <div class='console' id='console'>
+        <div style='color: #858585;'>Connecting to live stream...</div>
+    </div>
+    
+    <div class='status'>
+        Status: <span id='status' class='disconnected'>Disconnected</span>
+        | Free memory: <span id='heap'>0</span> bytes
+        | Messages: <span id='messageCount'>0</span>
+    </div>
+    
+    <script>
+        var messageCount = 0;
+        var lastMessageCount = -1;
+        var consoleEl = document.getElementById('console');
+        var status = document.getElementById('status');
+        var messageCountEl = document.getElementById('messageCount');
+        var heapEl = document.getElementById('heap');
+        
+        function connect() {
+            var statusEl = document.getElementById('status');
+            var consoleEl = document.getElementById('console');
+            if (statusEl) {
+                statusEl.textContent = 'Connecting...';
+                statusEl.className = 'disconnected';
+            }
+            if (consoleEl) {
+                consoleEl.innerHTML = '<div style="color: #4ec9b0;">Connecting to live debug stream...</div>';
+            }
+            fetchMessages();
+        }
+        
+        function fetchMessages() {
+            var controller = new AbortController();
+            var timeoutId = setTimeout(function() {
+                controller.abort();
+            }, 3000);
+            
+            fetch('/debug-stream', {
+                signal: controller.signal
+            })
+                .then(function(response) {
+                    clearTimeout(timeoutId);
+                    if (!response.ok) throw new Error('HTTP ' + response.status);
+                    return response.json();
+                })
+                .then(function(data) {
+                    if (data && data.status === 'ok') {
+                        var statusEl = document.getElementById('status');
+                        var heapEl = document.getElementById('heap');
+                        var messageCountEl = document.getElementById('messageCount');
+                        
+                        if (statusEl) {
+                            statusEl.textContent = 'Connected';
+                            statusEl.className = 'connected';
+                        }
+                        
+                        if (data.count > lastMessageCount) {
+                            consoleEl.innerHTML = '';
+                            if (data.messages && data.messages.length > 0) {
+                                for (var i = 0; i < data.messages.length; i++) {
+                                    addMessage(data.messages[i]);
+                                }
+                            }
+                            lastMessageCount = data.count;
+                            consoleEl.scrollTop = consoleEl.scrollHeight;
+                        }
+                        messageCount = data.count;
+                        if (messageCountEl) messageCountEl.textContent = messageCount;
+                        if (heapEl) heapEl.textContent = data.heap;
+                    } else {
+                        var statusEl = document.getElementById('status');
+                        if (statusEl) {
+                            statusEl.textContent = 'Invalid Data';
+                            statusEl.className = 'disconnected';
+                        }
+                    }
+                    
+                    while (consoleEl.children.length > 200) {
+                        consoleEl.removeChild(consoleEl.firstChild);
+                    }
+                })
+                .catch(function(error) {
+                    var statusEl = document.getElementById('status');
+                    if (statusEl) {
+                        statusEl.textContent = 'Connection Error';
+                        statusEl.className = 'disconnected';
+                    }
+                })
+                .finally(function() {
+                    setTimeout(fetchMessages, 500);
+                });
+        }
+        
+        function addMessage(msg) {
+            var div = document.createElement('div');
+            div.innerHTML = '<span class="timestamp">' + escapeHtml(msg.timestamp) + '</span> <span class="message">' + escapeHtml(msg.message) + '</span>';
+            consoleEl.appendChild(div);
+        }
+        
+        function clearConsole() {
+            consoleEl.innerHTML = '';
+            messageCount = 0;
+            lastMessageCount = -1;
+            messageCountEl.textContent = messageCount;
+        }
+        
+        function escapeHtml(text) {
+            var div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        connect();
+    </script>
+</body>
+</html>)";
+        
+        server.send(200, "text/html", html);
+    });
+    
+    // Clear debug log
+    server.on("/debug/clear", HTTP_GET, []() {
+        DebugLog::getInstance().clear();
+        server.sendHeader("Location", "/debug");
+        server.send(302, "text/plain", "Redirecting...");
+    });
+    
+    // Server-Sent Events for debug streaming
+    server.on("/debug-stream", HTTP_GET, handleDebugStream);
     
 }
 
@@ -302,6 +508,8 @@ void handleGetDevice() {
 }
 
 void handleControlDevice() {
+    DEBUG_PRINTLN("HTTP: POST /device/control");
+    
     if (!server.hasArg("plain")) {
         server.sendHeader("Access-Control-Allow-Origin", "*");
         server.send(400, "application/json", "{\"error\":\"Missing JSON body\"}");
@@ -377,10 +585,21 @@ void handleControlDevice() {
     // Send control request
     bool success = bridge.controlDevice(address, request);
     
+    if (success) {
+        DEBUG_PRINTF("HTTP: Command queued for %s\n", address.c_str());
+    } else {
+        DEBUG_PRINTF("HTTP: Failed to queue command for %s\n", address.c_str());
+    }
+    
     StaticJsonDocument<200> responseDoc;
     responseDoc["success"] = success;
+    responseDoc["queued"] = success;
+    responseDoc["pending_commands"] = bridge.getPendingCommandsCount();
+    
     if (!success) {
-        responseDoc["error"] = "Failed to send command";
+        responseDoc["error"] = "Failed to queue command";
+    } else {
+        responseDoc["message"] = "Command queued for execution";
     }
     
     String response;
@@ -750,3 +969,23 @@ void sendUdpStatusUpdate() {
                  UDP_TARGET_IP, UDP_TARGET_PORT, success ? "YES" : "NO", jsonString.length());
 }
 #endif
+
+void handleDebugStream() {
+    server.sendHeader("Cache-Control", "no-cache");
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    
+    // Add a test message to see if streaming works
+    static bool firstCall = true;
+    if (firstCall) {
+        Serial.println("Debug stream endpoint called for the first time");
+        firstCall = false;
+    }
+    
+    // Get latest messages in JSON format
+    String response = "{\"messages\":" + debugStreamer.getMessagesJSON();
+    response += ",\"count\":" + String(debugStreamer.getMessageCount());
+    response += ",\"heap\":" + String(ESP.getFreeHeap());
+    response += ",\"status\":\"ok\"}";
+    
+    server.send(200, "application/json", response);
+}

@@ -7,6 +7,7 @@
 #include <set>
 #include "NasaProtocol.h"
 #include "user_config.h"
+#include "CommandQueue.h"
 
 struct DeviceState {
     bool power = false;
@@ -105,10 +106,12 @@ private:
     std::map<String, DeviceState> devices;
     std::set<String> discoveredAddresses;
     NasaProtocol protocol;
+    CommandQueue commandQueue;
     unsigned long lastTransmission = 0;
+    uint8_t currentSequenceNumber = 1;
     
     
-    static const unsigned long DEVICE_TIMEOUT_MS = DEVICE_TIMEOUT_MS;
+    static const unsigned long DEVICE_TIMEOUT_MS_VALUE = DEVICE_TIMEOUT_MS;
     static const unsigned long TRANSMISSION_TIMEOUT_MS = 500;
     
 public:
@@ -129,6 +132,13 @@ public:
     
     // Device control
     bool controlDevice(const String& address, const ControlRequest& request);
+    
+    // Command queue status
+    size_t getPendingCommandsCount() const { return commandQueue.getPendingCount(); }
+    bool hasActiveCommands() const { return commandQueue.getPendingCount() > 0; }
+    
+    // Handle ACK packet
+    void handleAckPacket(uint8_t packetNumber) { commandQueue.handleAck(packetNumber); }
     
     
     // MessageTarget interface implementation
